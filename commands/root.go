@@ -35,32 +35,6 @@ func requirePath(path, cmdName string) error {
 	return nil
 }
 
-// parseTarget 解析 [context:]bucket/path 格式的参数。
-// 冒号只有出现在第一个 '/' 之前时才视为 context 分隔符，
-// 因此 "bucket/a:b.txt" 中的冒号属于对象名，不会被误判。
-// 返回的 ctxName 为空表示未指定 context（使用当前 context）。
-func parseTarget(target string) (ctxName, bucket, path string, err error) {
-	rest := target
-
-	colon := strings.Index(target, ":")
-	if colon >= 0 {
-		slash := strings.Index(target, "/")
-		if slash < 0 || colon < slash {
-			ctxName = target[:colon]
-			rest = target[colon+1:]
-			if ctxName == "" {
-				return "", "", "", fmt.Errorf("无效的路径格式: %s，context 名称不能为空", target)
-			}
-		}
-	}
-
-	bucket, path, err = parseBucketPath(rest)
-	if err != nil {
-		return "", "", "", err
-	}
-	return ctxName, bucket, path, nil
-}
-
 var (
 	configPath  string
 	contextName string
@@ -410,23 +384,22 @@ func NewCopyCmd() *cobra.Command {
 	var recursive bool
 	var concurrent int
 	var bigFile bool
+	var toContext string
 	cmd := &cobra.Command{
-		Use:   "copy [ctx:]src-bucket/src-object [ctx:]dest-bucket/dest-object",
+		Use:   "copy src-bucket/src-object dest-bucket/dest-object",
 		Short: "复制对象或目录（支持跨存储桶、跨 context）",
 		Long: `将对象或目录从一个位置复制到另一个位置，支持跨存储桶复制和跨 context（跨服务端）复制
 
 参数:
-  [ctx:]src-bucket/src-object   源存储桶和对象名称或目录前缀，可选 context 前缀
-  [ctx:]dest-bucket/dest-object 目标存储桶和对象名称或目录前缀，可选 context 前缀
-
-  context 前缀用于跨服务端复制，省略时使用当前 context。
-  冒号只有出现在第一个 / 之前才被视为 context 分隔符，
-  因此 bucket/a:b.txt 中的冒号属于对象名。
+  src-bucket/src-object   源存储桶和对象名称或目录前缀
+  dest-bucket/dest-object 目标存储桶和对象名称或目录前缀
 
 选项:
   -r, --recursive     递归复制整个目录
   -c, --concurrent    并发复制数量（仅与 -r 一起使用，默认 0 表示逐个复制）
   -b, --big           大文件分片复制（用于超过 5GB 的文件，仅同 context 有效）
+      --to-context    目标 context 名称（跨 context 复制时指定，省略时使用源 context）
+      --context       源 context 名称（省略时使用 current-context）
 
 同 context 复制（服务端复制，数据不经过本机）:
   s3m copy my-bucket/file.txt my-bucket/copy.txt              # 复制单个对象
@@ -435,9 +408,9 @@ func NewCopyCmd() *cobra.Command {
   s3m copy bucket1/large.dat bucket2/large-copy.dat -b        # 大文件分片复制
 
 跨 context 复制（流式中转，数据经过本机）:
-  s3m copy prod:bucket1/file.txt dev:bucket2/file.txt         # 跨服务端复制单个对象
-  s3m copy bucket1/file.txt dev:bucket2/file.txt              # 源使用当前 context
-  s3m copy prod:bucket1/photos/ dev:bucket2/photos/ -r -c 5   # 跨服务端递归复制
+  s3m copy bucket1/file.txt --to-context dev bucket2/file.txt              # 源用当前 context
+  s3m copy --context prod bucket1/file.txt --to-context dev bucket2/file.txt
+  s3m copy bucket1/photos/ --to-context dev bucket2/photos/ -r -c 5        # 跨服务端递归复制
 
 跨 context 限制:
   - 仅保留 Content-Type，不复制自定义元数据、存储类别、标签、ACL
@@ -446,12 +419,12 @@ func NewCopyCmd() *cobra.Command {
   - 失败需整个对象重传，不支持续传`,
 		Args: cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
-			srcCtx, srcBucket, srcObject, err := parseTarget(args[0])
+			srcBucket, srcObject, err := parseBucketPath(args[0])
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-			destCtx, destBucket, destObject, err := parseTarget(args[1])
+			destBucket, destObject, err := parseBucketPath(args[1])
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -465,10 +438,16 @@ func NewCopyCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
+			// 源 context：--context 指定，否则使用 current（usedContext）。
+			srcCtx := usedContext
+			if contextName != "" {
+				srcCtx = contextName
+			}
+
 			// 按 context 名判定是否跨端。不比对 endpoint：
 			// 同 endpoint 不同凭据时，服务端复制会用目标凭据去读源 bucket，可能因权限失败。
-			if srcCtx == destCtx {
-				// 双方指定了同一个 context（或都未指定），走服务端复制。
+			if toContext == "" || toContext == srcCtx {
+				// 未指定 --to-context，或与源 context 同名，走服务端复制。
 				// 注意必须按 srcCtx 取 client，因为它可能不是当前 context。
 				sameClient, sameCore, err := clientForContext(srcCtx)
 				if err != nil {
@@ -493,7 +472,7 @@ func NewCopyCmd() *cobra.Command {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-			destClient, _, err := clientForContext(destCtx)
+			destClient, _, err := clientForContext(toContext)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -514,6 +493,7 @@ func NewCopyCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "递归复制整个目录")
 	cmd.Flags().IntVarP(&concurrent, "concurrent", "c", 0, "并发复制数量（仅与 -r 一起使用）")
 	cmd.Flags().BoolVarP(&bigFile, "big", "b", false, "大文件分片复制（仅同 context 有效）")
+	cmd.Flags().StringVar(&toContext, "to-context", "", "目标 context 名称（跨 context 复制时指定，省略时使用源 context）")
 	return cmd
 }
 
