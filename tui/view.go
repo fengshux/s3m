@@ -126,8 +126,12 @@ func (m Model) renderBucketPane(width, lines int) []string {
 	case len(items) == 0:
 		body = append(body, m.focusedHintLine(width, "无桶（按 r 刷新）", FocusBuckets))
 	default:
-		for i := m.buckets.offset; i < m.buckets.offset+lines && i < len(items); i++ {
-			body = append(body, m.renderBucketRow(items[i], i == m.buckets.cursor, width))
+		vis := m.buckets.visible()
+		if len(vis) == 0 {
+			body = append(body, m.focusedHintLine(width, "无匹配桶（Esc 取消过滤）", FocusBuckets))
+		}
+		for i := m.buckets.offset; i < m.buckets.offset+lines && i < len(vis); i++ {
+			body = append(body, m.renderBucketRow(items[vis[i]], i == m.buckets.cursor, width))
 		}
 	}
 	return appendFixedLines(out, body, lines)
@@ -151,6 +155,9 @@ func appendFixedLines(out, body []string, lines int) []string {
 func (m Model) renderBucketHeader(width int) string {
 	title := paneHeaderStyle.Render("Buckets") + " " +
 		paneHeaderDimStyle.Render("("+itoa(len(m.buckets.items))+")")
+	if m.buckets.filter != "" {
+		title += " " + filterStyle.Render("Filter: "+m.buckets.filter)
+	}
 	if m.focus == FocusBuckets {
 		title = paneFocusMarkStyle.Render("▶ ") + title
 	} else {

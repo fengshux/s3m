@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -146,6 +147,12 @@ func runeWidth(r rune) int {
 // copyToClipboard 复制文本到剪贴板
 func copyToClipboard(text string) error {
 	return clipboard.WriteAll(text)
+}
+
+// isLocalDir 判断本地路径是否为目录
+func isLocalDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // rowSep 行分隔符

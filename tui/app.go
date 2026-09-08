@@ -101,6 +101,9 @@ func (m *Model) resize(w, h int) {
 	m.buckets.rows = maxInt(mainH-1, 1)
 	m.objects.rows = maxInt(mainH-2, 1)
 	m.input.SetWidth(maxInt(w-16, 10))
+	if m.pickerActive {
+		m.picker.SetHeight(m.pickerModalHeight())
+	}
 
 	if m.preview != nil {
 		listRows := maxInt(mainH*previewListRatio/100, 2)

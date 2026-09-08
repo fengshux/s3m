@@ -21,7 +21,7 @@ func newHelpModal() *modal {
 		"    j / ↓   k / ↑    上下移动",
 		"    g   G           跳到顶部 / 底部",
 		"    Ctrl+D / Ctrl+U 翻半页",
-		"    /               输入过滤关键词（实时过滤）",
+		"    /               输入过滤关键词（过滤当前面板）",
 		"    n / N           下一个 / 上一个匹配",
 		"",
 		"  桶面板",
@@ -232,6 +232,18 @@ func (m Model) renderModalFooter(mo *modal) string {
 	}
 }
 
+// pickerModalHeight 本地文件选择器弹窗内容高度
+func (m Model) pickerModalHeight() int {
+	h := m.height * 60 / 100
+	if h > 20 {
+		h = 20
+	}
+	if h < 5 {
+		h = 5
+	}
+	return h
+}
+
 // renderPickerModal 本地文件选择器弹窗（上传）
 func (m Model) renderPickerModal() string {
 	title := "选择文件上传"
@@ -240,15 +252,17 @@ func (m Model) renderPickerModal() string {
 	}
 	target := "目标: " + m.currentBucket + "/" + m.currentPrefix
 
-	h := m.height * 60 / 100
-	if h > 20 {
-		h = 20
-	}
+	h := m.pickerModalHeight()
 	m.picker.SetHeight(h)
 
 	header := modalTitleStyle.Render(title) + "  " + modalDimStyle.Render(shorten(target, 50))
 	body := m.picker.View()
-	footer := modalDimStyle.Render("[Enter] 选择  [j/k] 移动  [l/→] 进入目录  [h/←] 返回上级  [Esc] 取消")
+
+	footerKeys := "[Enter] 选择  [j/k] 移动  [l/→] 进入目录  [h/←] 返回上级  [Esc] 取消"
+	if m.pickerDir {
+		footerKeys = "[y] 选中当前目录  [Enter/l/→] 进入  [j/k] 移动  [h/←] 返回上级  [Esc] 取消"
+	}
+	footer := modalDimStyle.Render(footerKeys)
 
 	return modalBoxStyle.Render(strings.Join([]string{
 		header,

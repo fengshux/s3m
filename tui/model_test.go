@@ -213,6 +213,42 @@ func TestFilterFlow(t *testing.T) {
 	}
 }
 
+func TestBucketFilterFlow(t *testing.T) {
+	m := newTestModel()
+	m = feedBuckets(m, "alpha", "beta", "gamma")
+
+	// 桶面板焦点下按 / ，焦点不应跳到对象面板
+	m = press(m, "/")
+	if m.inputMode != InputFilter {
+		t.Fatal("未进入过滤模式")
+	}
+	if m.focus != FocusBuckets {
+		t.Fatalf("焦点不应跳到对象面板，实际 %v", m.focus)
+	}
+
+	// 输入 "al"（实时过滤，只剩 alpha）
+	m = typeText(m, "al")
+	if m.buckets.visibleCount() != 1 {
+		t.Errorf("过滤后应剩 1 个桶，实际 %d", m.buckets.visibleCount())
+	}
+	if cur := m.buckets.current(); cur == nil || cur.key != "alpha" {
+		t.Errorf("光标应停在 alpha 上，实际 %+v", cur)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "alpha") || strings.Contains(view, "beta") {
+		t.Error("桶过滤渲染不正确")
+	}
+
+	// Esc 取消过滤
+	m = press(m, "esc")
+	if m.inputMode != InputNone {
+		t.Error("Esc 应退出过滤模式")
+	}
+	if m.buckets.visibleCount() != 3 {
+		t.Errorf("取消过滤后应恢复 3 个桶，实际 %d", m.buckets.visibleCount())
+	}
+}
+
 func TestMultiSelectAndBatchDeleteModal(t *testing.T) {
 	m := newTestModel()
 	m = feedBuckets(m, "alpha")

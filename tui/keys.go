@@ -34,7 +34,7 @@ func (m *Model) handleInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.commitInput(mode, value)
 	case "esc":
 		if m.inputMode == InputFilter {
-			m.objects.setFilter("")
+			m.focusedPane().setFilter("")
 		}
 		m.inputMode = InputNone
 		m.input.Blur()
@@ -45,7 +45,7 @@ func (m *Model) handleInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	if m.inputMode == InputFilter {
-		m.objects.setFilter(m.input.Value())
+		m.focusedPane().setFilter(m.input.Value())
 	}
 	return m, cmd
 }
@@ -56,7 +56,7 @@ func (m *Model) commitInput(mode InputMode, value string) (tea.Model, tea.Cmd) {
 	case InputCommand:
 		return m.executeCommand(value)
 	case InputFilter:
-		m.objects.setFilter(value) // 过滤已实时生效，此处仅收尾
+		m.focusedPane().setFilter(value) // 过滤已实时生效，此处仅收尾
 		return m, nil
 	case InputPath:
 		return m.confirmPathInput(value)
@@ -71,11 +71,22 @@ func (m *Model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// 目录模式下 Enter 仅用于下钻，用 y 显式选中当前高亮目录
+	if m.pickerDir && (msg.String() == "y" || msg.String() == "Y") {
+		if path := m.picker.HighlightedPath(); path != "" && isLocalDir(path) {
+			m.pickerActive = false
+			return m.openUploadConfirm(path)
+		}
+		return m, nil
+	}
+
 	var cmd tea.Cmd
 	m.picker, cmd = m.picker.Update(msg)
-	if didSelect, path := m.picker.DidSelectFile(msg); didSelect {
-		m.pickerActive = false
-		return m.openUploadConfirm(path)
+	if !m.pickerDir {
+		if didSelect, path := m.picker.DidSelectFile(msg); didSelect {
+			m.pickerActive = false
+			return m.openUploadConfirm(path)
+		}
 	}
 	return m, cmd
 }
@@ -237,7 +248,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ":":
 		return m.enterInput(InputCommand, ": ", "命令: cd/ls/get/put/sign/use/history/exit", "")
 	case "/":
-		m.focus = FocusObjects
 		return m.enterInput(InputFilter, "/ ", "输入过滤关键词", "")
 	case "q":
 		return m.openQuitConfirm()
@@ -301,9 +311,9 @@ func (m *Model) handleNavigationKey(key string) (tea.Cmd, bool) {
 	return nil, true
 }
 
-// jumpFilter 过滤匹配项跳转
+// jumpFilter 过滤匹配项跳转（作用于焦点面板）
 func (m *Model) jumpFilter(next bool) tea.Cmd {
-	if !m.objects.jumpMatch(next) {
+	if !m.focusedPane().jumpMatch(next) {
 		m.setStatus(statusNone, "无过滤词，按 / 输入过滤后使用 n/N 跳转")
 	}
 	return nil
@@ -396,6 +406,7 @@ func (m *Model) openUploadPicker(dir bool) (tea.Model, tea.Cmd) {
 	m.pickerDir = dir
 	m.picker.FileAllowed = !dir
 	m.picker.DirAllowed = dir
+	m.picker.SetHeight(m.pickerModalHeight())
 	m.pickerActive = true
 	return m, m.picker.Init()
 }
