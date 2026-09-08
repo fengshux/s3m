@@ -364,8 +364,7 @@ func (m *Model) handleObjectKey(key string) (tea.Model, tea.Cmd) {
 		m.setStatus(statusNone, "请选中一个文件后按 i 查看 Meta")
 	case "v":
 		if e != nil && !e.isBack && !e.isDir {
-			m.openPreview(*e)
-			return m, nil
+			return m, m.openPreview(*e)
 		}
 		m.setStatus(statusNone, "请选中一个文本文件后按 v 预览")
 	case "u":

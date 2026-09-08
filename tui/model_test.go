@@ -392,6 +392,28 @@ func TestPreviewFlow(t *testing.T) {
 	}
 }
 
+func TestPreviewLoadCmdReturned(t *testing.T) {
+	m := newTestModel()
+	m = feedBuckets(m, "alpha")
+	m = press(m, "enter")
+	m = feedObjects(m, []entry{testEntry("a.txt", false, 100)})
+	m = press(m, "j")
+
+	// v 键应返回加载命令，否则内容永远不会加载
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
+	if cmd == nil {
+		t.Fatal("按 v 应返回预览加载命令")
+	}
+
+	// Enter 打开 txt 文件同样应返回加载命令（先关闭预览再测）
+	m = press(m, "esc")
+	m = press(m, "j")
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter 打开 txt 应返回预览加载命令")
+	}
+}
+
 func TestLargePreviewRejected(t *testing.T) {
 	m := newTestModel()
 	m = feedBuckets(m, "alpha")

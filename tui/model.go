@@ -255,10 +255,10 @@ func withBackRow(items []entry) []entry {
 	return append([]entry{newBackEntry()}, items...)
 }
 
-// openPreview 打开文本预览（带大文件策略检查）
-func (m *Model) openPreview(e entry) {
+// openPreview 打开文本预览（带大文件策略检查），返回加载命令（可能为 nil）
+func (m *Model) openPreview(e entry) tea.Cmd {
 	if e.isDir {
-		return
+		return nil
 	}
 	if e.size > previewRejectSize {
 		m.activeModal = &modal{
@@ -271,7 +271,7 @@ func (m *Model) openPreview(e entry) {
 				"请使用命令行: s3m cat " + m.currentBucket + "/" + e.key,
 			},
 		}
-		return
+		return nil
 	}
 	if e.size > previewWarnSize {
 		key := e.key
@@ -288,9 +288,9 @@ func (m *Model) openPreview(e entry) {
 				return mm.beginPreview(key)
 			},
 		}
-		return
+		return nil
 	}
-	m.beginPreview(e.key)
+	return m.beginPreview(e.key)
 }
 
 // beginPreview 异步加载预览内容
@@ -343,8 +343,7 @@ func (m *Model) enterEntry() tea.Cmd {
 		m.currentPrefix = e.key
 		return m.startObjectLoadReset()
 	case isTextEntry(*e):
-		m.openPreview(*e)
-		return nil
+		return m.openPreview(*e)
 	default:
 		m.setStatus(statusNone, "二进制文件不支持预览，按 i 查看信息 / d 下载")
 		return nil
