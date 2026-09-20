@@ -202,32 +202,30 @@ func NewStatCmd() *cobra.Command {
 
 // NewGetCmd 创建 get 子命令
 func NewGetCmd() *cobra.Command {
-	var output string
 	var recursive bool
 	var concurrent int
 	cmd := &cobra.Command{
-		Use:   "get bucket/object [local-dir]",
+		Use:   "get bucket/object [local-path]",
 		Short: "下载对象或目录到本地",
 		Long: `从存储桶下载指定对象或目录到本地
 
 参数:
   bucket/object  存储桶名称和对象路径或目录前缀
-  local-dir      本地保存目录（仅递归下载时使用，默认: 当前目录）
+  local-path     本地保存路径（下载单个对象时为文件路径，递归下载时为目录，默认: 当前目录/对象名）
 
 选项:
-  -o, --output     本地保存路径（下载单个对象时使用）
   -r, --recursive  递归下载整个目录
   -c, --concurrent 并发下载数量（仅与 -r 一起使用，默认 0 表示逐个下载）
 
 示例:
   # 下载单个对象
   s3m get my-bucket/file.txt                             # 保存为 file.txt
-  s3m get my-bucket/photos/image.jpg -o /tmp/photo.jpg   # 指定路径
+  s3m get my-bucket/photos/image.jpg /tmp/photo.jpg      # 指定路径
 
   # 递归下载目录
   s3m get my-bucket/photos/ ./local-photos/ -r           # 逐个下载
   s3m get my-bucket/docs/ ./docs/ -r -c 5                # 5个并发下载`,
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.MaximumNArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
 			bucket, objectName, err := parseBucketPath(args[0])
 			if err != nil {
@@ -239,22 +237,25 @@ func NewGetCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
+			localPath := ""
+			if len(args) > 1 {
+				localPath = args[1]
+			}
+
 			getter := operations.NewGetter(client)
 
 			if recursive {
 				// 递归下载目录
-				localDir := "."
-				if len(args) > 1 {
-					localDir = args[1]
+				if localPath == "" {
+					localPath = "."
 				}
-				getter.GetDir(cmd.Context(), bucket, objectName, localDir, concurrent)
+				getter.GetDir(cmd.Context(), bucket, objectName, localPath, concurrent)
 			} else {
 				// 下载单个对象
-				getter.Get(cmd.Context(), bucket, objectName, output)
+				getter.Get(cmd.Context(), bucket, objectName, localPath)
 			}
 		},
 	}
-	cmd.Flags().StringVarP(&output, "output", "o", "", "本地保存路径（下载单个对象时使用）")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "递归下载整个目录")
 	cmd.Flags().IntVarP(&concurrent, "concurrent", "c", 0, "并发下载数量（仅与 -r 一起使用）")
 	return cmd
@@ -296,13 +297,13 @@ func NewPutCmd() *cobra.Command {
 	var recursive bool
 	var concurrent int
 	cmd := &cobra.Command{
-		Use:   "put bucket/object local-file",
+		Use:   "put local-path bucket/object",
 		Short: "上传本地文件或目录到存储桶",
 		Long: `将本地文件或目录上传到指定存储桶
 
 参数:
+  local-path     本地文件路径或目录路径（与 -r 一起使用时为目录）
   bucket/object  存储桶名称和对象存储路径（或目录前缀，与 -r 一起使用）
-  local-file     本地文件路径或目录路径（与 -r 一起使用）
 
 选项:
   -t, --type       Content-Type（默认: 自动检测，仅单文件上传时有效）
@@ -310,14 +311,15 @@ func NewPutCmd() *cobra.Command {
   -c, --concurrent 并发上传数量（仅与 -r 一起使用，默认 0 表示逐个上传）
 
 示例:
-  s3m put my-bucket/file.txt ./local.txt
-  s3m put my-bucket/photos/image.jpg ./photo.jpg
-  s3m put my-bucket/data.json ./data.json -t application/json
-  s3m put my-bucket/photos/ ./local-photos/ -r           # 递归上传目录
-  s3m put my-bucket/docs/ ./docs/ -r -c 5                # 5个并发上传`,
+  s3m put ./local.txt my-bucket/file.txt
+  s3m put ./photo.jpg my-bucket/photos/image.jpg
+  s3m put ./data.json my-bucket/data.json -t application/json
+  s3m put ./local-photos/ my-bucket/photos/ -r           # 递归上传目录
+  s3m put ./docs/ my-bucket/docs/ -r -c 5                # 5个并发上传`,
 		Args: cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
-			bucket, objectName, err := parseBucketPath(args[0])
+			localPath := args[0]
+			bucket, objectName, err := parseBucketPath(args[1])
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -326,7 +328,6 @@ func NewPutCmd() *cobra.Command {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-			localPath := args[1]
 			putter := operations.NewPutter(client)
 
 			if recursive {

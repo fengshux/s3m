@@ -290,7 +290,7 @@ s3m stat my-bucket/photos/2024/image.jpg
 
 ```bash
 s3m get bucket/object               # 下载对象（默认保存为对象名）
-s3m get bucket/object -o /tmp/file  # 指定保存路径
+s3m get bucket/object /tmp/file     # 指定保存路径
 
 # 递归下载目录
 s3m get bucket/photos/ ./local-photos/ -r      # 逐个下载
@@ -307,12 +307,12 @@ s3m cat my-bucket/logs/app.log
 #### 上传文件
 
 ```bash
-s3m put bucket/object local-file    # 上传文件
-s3m put bucket/data.json ./data.json -t application/json  # 指定 Content-Type
+s3m put local-file bucket/object    # 上传文件
+s3m put ./data.json bucket/data.json -t application/json  # 指定 Content-Type
 
 # 递归上传目录
-s3m put bucket/photos/ ./local-photos/ -r      # 逐个上传
-s3m put bucket/docs/ ./docs/ -r -c 5           # 5个并发上传
+s3m put ./local-photos/ bucket/photos/ -r      # 逐个上传
+s3m put ./docs/ bucket/docs/ -r -c 5           # 5个并发上传
 ```
 
 #### 生成签名下载链接
