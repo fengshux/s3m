@@ -79,7 +79,7 @@ ctx.dev.usessl=false
 ctx.dev.auth=enc:aes:<密文>
 ```
 
-`ctx.<name>.auth` 的明文格式为 `<accessKey>\x1f<secretKey>`（`\x1f` 是 ASCII Unit Separator），整体 AES-256-GCM 加密后用 base64 编码，前缀 `enc:aes:`。
+`ctx.<name>.auth` 仅支持密文：明文为 `<accessKey>\x1f<secretKey>`（`\x1f` 是 ASCII Unit Separator），整体 AES-256-GCM 加密后用 base64 编码，前缀 `enc:aes:`。该字段由程序写入/导入自动生成；手写明文请改用 `ctx.<name>.accesskey` / `ctx.<name>.secretkey`。
 
 ### 配置文件查找优先级
 
@@ -97,9 +97,7 @@ ctx.dev.auth=enc:aes:<密文>
 - **写操作禁止**：`context set/upsert/rename/delete/set-default` 全部报错并提示
 - **TUI 仍可读**：标题栏显示 `[ctx: name (readonly)]`，`use <name>` 临时切换可用，`set-default` 被拒
 
-支持的明文 conf 格式：
-
-**新格式（多 context，扁平 key=value）**：
+支持的明文 conf 格式（多 context，扁平 key=value）：
 
 ```ini
 current-context=dev
@@ -107,20 +105,22 @@ current-context=dev
 [dev]
 ctx.dev.endpoint=10.0.0.1:9000
 ctx.dev.usessl=false
-# auth 明文格式：<ak>\x1f<sk>（\x1f 是 ASCII Unit Separator）
-ctx.dev.auth=AKDEV\x1fSKDEV
+# 明文 AK/SK：最方便，优先于 auth
+ctx.dev.accesskey=AKDEV
+ctx.dev.secretkey=SKDEV
+
+[staging]
+ctx.staging.endpoint=s3.example.com
+ctx.staging.usessl=true
+# auth 仅支持 enc:aes: 密文（由程序写入/导入生成）
+ctx.staging.auth=enc:aes:<密文>
 ```
 
-**旧格式（单 context，触发自动迁移被禁用）**：
-
-```ini
-endpoint=10.0.0.1:9000
-usessl=false
-accesskey=AKDEV
-secretkey=SKDEV
-```
-
-密文格式（`enc:aes:...`）也仍然兼容，可与明文混存于同一 conf。
+规则：
+- `ctx.<name>.accesskey` / `ctx.<name>.secretkey` 为明文字段，必须成对出现
+- `ctx.<name>.auth` 仅支持 `enc:aes:...` 密文，不接受明文 `<ak>\x1f<sk>`
+- 同一 context 同时出现 `auth` 与 `accesskey/secretkey` 时，优先 `accesskey/secretkey`
+- 旧格式（无 `ctx.` 前缀的 `endpoint/accesskey/secretkey/usessl`）已废弃，直接报错
 
 使用示例：
 
@@ -151,14 +151,9 @@ s3m context import /tmp/my-plain.conf
 - 导入文件本身**不会**被修改
 - 导入文件不存在时返回错误并退出码 1
 
+导入时如果源文件使用明文 `ctx.<name>.accesskey` / `ctx.<name>.secretkey`，会自动加密为 `ctx.<name>.auth=enc:aes:...` 写入默认配置，**不保留明文**。
+
 适用场景：把团队共享的明文 conf、CI 临时 conf、minio server 导出的 conf 等批量导入到本地默认配置。
-
-### 旧格式兼容
-
-如果 `s3m.conf` 中只包含 `endpoint=.../usessl=.../accesskey=.../secretkey=...` 的旧格式（无 `ctx.*` 段），S3M 在加载时自动迁移为新格式：
-- 把 AK/SK 合并加密写入 `ctx.default.auth`
-- 设置 `current-context=default`
-- 原文件备份为 `s3m.conf.bak`
 
 ### Context 解析优先级
 
@@ -413,7 +408,7 @@ s3m context delete <name> [-f]           # 删除 context
 ```
 s3m/
 ├── main.go                # 程序入口
-├── config.go              # 配置文件解析、ContextStore、旧格式迁移
+├── config.go              # 配置文件解析、ContextStore
 ├── context_ops.go         # main 包注入给 commands 的 context 操作实现
 ├── client.go              # S3M 客户端创建
 ├── crypto/

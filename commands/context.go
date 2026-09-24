@@ -62,7 +62,9 @@ accesskey/secretkey 加密存储（机器绑定）。
   show [name]       解密显示 context 详情（默认显示当前）
   set <name>        交互式创建/更新 context
   rename <old> <new> 重命名 context
-  delete <name>     删除 context`,
+  delete <name>     删除 context
+  import <file>     从明文 conf 文件导入 context 到默认配置`,
+
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 让 --config 参数对 context 子命令生效
 			if configPath != "" && SetExternalConfigPath != nil {
@@ -322,8 +324,12 @@ func newContextImportCmd() *cobra.Command {
   - 导入文件的 current-context 不会同步到默认配置
   - 导入文件本身不会被修改
 
-支持的文件格式与 --config 指定的明文 conf 完全相同（多 context 扁平 key=value，
-或单 context 旧格式 endpoint/accesskey/secretkey，AK/SK 可为明文或 enc:aes: 密文）。`,
+支持的文件格式（多 context 扁平 key=value）:
+  - ctx.<name>.endpoint / ctx.<name>.usessl
+  - ctx.<name>.accesskey / ctx.<name>.secretkey（明文，优先于 auth）
+  - ctx.<name>.auth（仅 enc:aes: 密文）
+导入后 accesskey/secretkey 会自动加密为 auth 写入默认配置。`,
+
 		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			imported, err := CtxOps.ImportFromFileFn(args[0])

@@ -32,21 +32,25 @@ type Context struct {
 type ContextStore struct {
 	Current  string
 	Contexts map[string]Context
-	ReadOnly bool // --config 显式指定时为 true：写操作禁止、不触发迁移
+	ReadOnly bool // --config 显式指定时为 true：写操作禁止
 }
 
-// contextKeyPrefix 扁平 key=value 中 context 字段的前缀，例如 "ctx.prod.endpoint"
+// 配置文件中 context 字段的前缀，例如 "ctx.prod.endpoint"
 const (
-	contextKeyPrefix     = "ctx."
-	currentContextKey    = "current-context"
-	legacyKeyEndpoint    = "endpoint"
-	legacyKeyAccessKey   = "accesskey"
-	legacyKeySecretKey   = "secretkey"
-	legacyKeyUseSSL      = "usessl"
-	legacyKeySSL         = "ssl"
-	defaultContextName   = "default"
-	migratedBackupSuffix = ".bak"
+	contextKeyPrefix  = "ctx."
+	currentContextKey = "current-context"
+
+	// ctx.<name>.<field> 支持的字段
+	ctxFieldEndpoint  = "endpoint"
+	ctxFieldUseSSL    = "usessl"
+	ctxFieldSSLAlias  = "ssl"
+	ctxFieldAuth      = "auth"
+	ctxFieldAccessKey = "accesskey"
+	ctxFieldSecretKey = "secretkey"
 )
+
+// legacyBareKeys 已废弃的旧格式顶级键（无 ctx. 前缀），出现即报错
+var legacyBareKeys = []string{"endpoint", "accesskey", "secretkey", "usessl", "ssl"}
 
 // 配置文件搜索路径（按优先级排序）
 var configPaths = []string{
@@ -63,7 +67,8 @@ func LoadConfig(configPath string) (*Config, error) {
 }
 
 // ParseContextStore 公开的解析接口（供 import 等场景复用）。
-// readOnly=true 时旧格式不迁移、auth 支持明文；不触发任何文件写操作。
+// readOnly 仅影响返回 store 的 ReadOnly 标记，不改变解析规则；
+// 解析规则统一为：auth 仅密文，accesskey/secretkey 明文，旧格式直接报错。
 func ParseContextStore(path string, readOnly bool) (*ContextStore, error) {
 	return parseContextStore(expandPath(path), readOnly)
 }
@@ -73,7 +78,7 @@ func ParseContextStore(path string, readOnly bool) (*ContextStore, error) {
 //  2. 否则使用 current-context
 //  3. 都为空时报错
 //
-// 当 configPath 非空时，store 标记为 ReadOnly（外部指定 conf 不写盘、不迁移）。
+// 当 configPath 非空时，store 标记为 ReadOnly（外部指定 conf 不写盘）。
 func LoadContextStore(configPath, requestedName string) (*Config, string, error) {
 	paths := configPaths
 	readOnly := false
@@ -135,13 +140,19 @@ func joinNames(store *ContextStore) string {
 }
 
 // parseContextStore 解析配置文件。
-// 当 readOnly=true 时：
-//   - 旧格式不迁移，明文 AK/SK 直接进入 Context
-//   - 新格式 ctx.<name>.auth 支持明文（按 \x1f 拆分）
 //
-// 当 readOnly=false 时：
-//   - 旧格式触发迁移（自动改写为新格式并备份）
-//   - 新格式 ctx.<name>.auth 必须是 enc:aes: 密文
+// 支持的字段（ctx.<name>.<field>）：
+//   - endpoint   : endpoint 地址
+//   - usessl/ssl : 是否使用 SSL（true/false）
+//   - accesskey  : 明文 AccessKey（仅明文，优先于 auth）
+//   - secretkey  : 明文 SecretKey（仅明文，优先于 auth）
+//   - auth       : 仅支持 enc:aes: 密文（由程序写入/导入自动生成）
+//
+// 规则：
+//   - 同一 context 同时出现 auth 与 accesskey/secretkey 时，优先 accesskey/secretkey
+//   - accesskey 与 secretkey 必须成对出现
+//   - auth 必须是 enc:aes: 密文，不接受明文 AK\x1fSK
+//   - 旧格式顶级键（endpoint/accesskey/secretkey/usessl/ssl，无 ctx. 前缀）直接报错
 func parseContextStore(path string, readOnly bool) (*ContextStore, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -149,10 +160,15 @@ func parseContextStore(path string, readOnly bool) (*ContextStore, error) {
 	}
 	defer file.Close()
 
-	store := &ContextStore{Contexts: map[string]Context{}}
-	hasNewFormat := false
-	legacy := map[string]string{}
-	var legacyUseSSL *bool
+	store := &ContextStore{
+		Contexts: map[string]Context{},
+		ReadOnly: readOnly,
+	}
+	// 记录每个 context 的明文/密文凭证来源，用于解析结束后确定优先级
+	plainAK := map[string]string{}
+	plainSK := map[string]string{}
+	authAK := map[string]string{}
+	authSK := map[string]string{}
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -173,28 +189,20 @@ func parseContextStore(path string, readOnly bool) (*ContextStore, error) {
 		// current-context 不带前缀
 		if key == currentContextKey {
 			store.Current = value
-			hasNewFormat = true
 			continue
 		}
 
-		// 旧格式字段
+		// 旧格式顶级键（无 ctx. 前缀）直接报错
 		if !strings.HasPrefix(key, contextKeyPrefix) {
-			switch strings.ToLower(key) {
-			case legacyKeyEndpoint, legacyKeyAccessKey, legacyKeySecretKey, legacyKeyUseSSL, legacyKeySSL:
-				legacy[strings.ToLower(key)] = value
-				if strings.ToLower(key) == legacyKeyUseSSL || strings.ToLower(key) == legacyKeySSL {
-					parsed, perr := strconv.ParseBool(value)
-					if perr != nil {
-						return nil, fmt.Errorf("配置项 %s 值无效: %s（应为 true/false）", key, value)
-					}
-					legacyUseSSL = &parsed
-				}
+			if containsString(legacyBareKeys, strings.ToLower(key)) {
+				return nil, fmt.Errorf(
+					"检测到已废弃的旧配置格式（%s），请改用 %s<name>.endpoint / %s<name>.usessl / %s<name>.accesskey / %s<name>.secretkey",
+					key, contextKeyPrefix, contextKeyPrefix, contextKeyPrefix, contextKeyPrefix)
 			}
 			continue
 		}
 
 		// 新格式：ctx.<name>.<field>
-		hasNewFormat = true
 		rest := strings.TrimPrefix(key, contextKeyPrefix)
 		dot := strings.Index(rest, ".")
 		if dot <= 0 {
@@ -205,21 +213,25 @@ func parseContextStore(path string, readOnly bool) (*ContextStore, error) {
 
 		ctx := store.Contexts[name]
 		switch field {
-		case "endpoint":
+		case ctxFieldEndpoint:
 			ctx.Endpoint = value
-		case "usessl", "ssl":
+		case ctxFieldUseSSL, ctxFieldSSLAlias:
 			parsed, perr := strconv.ParseBool(value)
 			if perr != nil {
 				return nil, fmt.Errorf("配置项 %s 值无效: %s（应为 true/false）", key, value)
 			}
 			ctx.UseSSL = parsed
-		case "auth":
-			ak, sk, derr := decryptOrSplitAuth(value, readOnly)
+		case ctxFieldAccessKey:
+			plainAK[name] = value
+		case ctxFieldSecretKey:
+			plainSK[name] = value
+		case ctxFieldAuth:
+			ak, sk, derr := decryptAuth(value)
 			if derr != nil {
 				return nil, fmt.Errorf("context %q auth 字段无效: %w", name, derr)
 			}
-			ctx.AccessKey = ak
-			ctx.SecretKey = sk
+			authAK[name] = ak
+			authSK[name] = sk
 		default:
 			// 未知字段忽略
 		}
@@ -229,115 +241,47 @@ func parseContextStore(path string, readOnly bool) (*ContextStore, error) {
 		return nil, err
 	}
 
-	// 触发旧格式迁移
-	if !hasNewFormat && len(legacy) > 0 {
-		if readOnly {
-			// 只读模式：直接读明文，不改写文件
-			ep := legacy[legacyKeyEndpoint]
-			ak := legacy[legacyKeyAccessKey]
-			sk := legacy[legacyKeySecretKey]
-			if ep == "" || ak == "" || sk == "" {
-				return nil, errors.New("旧格式明文 conf 缺少 endpoint/accesskey/secretkey")
-			}
-			ssl := true
-			if legacyUseSSL != nil {
-				ssl = *legacyUseSSL
-			}
-			store.Contexts[defaultContextName] = Context{
-				Endpoint:  ep,
-				UseSSL:    ssl,
-				AccessKey: ak,
-				SecretKey: sk,
-			}
-			if store.Current == "" {
-				store.Current = defaultContextName
-			}
-		} else {
-			migrated, merr := migrateLegacyConfig(path, legacy, legacyUseSSL)
-			if merr != nil {
-				return nil, merr
-			}
-			// 迁移后使用新 store
-			store = migrated
+	// 解析结束后确定每个 context 的凭证：
+	// 明文 accesskey/secretkey 优先于 auth 密文；成对出现
+	for name := range store.Contexts {
+		ctx := store.Contexts[name]
+		ak, hasAK := plainAK[name]
+		sk, hasSK := plainSK[name]
+		switch {
+		case hasAK && hasSK:
+			ctx.AccessKey = ak
+			ctx.SecretKey = sk
+		case hasAK || hasSK:
+			return nil, fmt.Errorf("context %q 的 accesskey 和 secretkey 必须同时出现", name)
+		case len(authAK[name]) > 0 || len(authSK[name]) > 0:
+			ctx.AccessKey = authAK[name]
+			ctx.SecretKey = authSK[name]
+		default:
+			return nil, fmt.Errorf("context %q 缺少 accesskey/secretkey 或 auth", name)
 		}
+		store.Contexts[name] = ctx
 	}
 
 	return store, nil
 }
 
-// decryptOrSplitAuth 处理 ctx.<name>.auth 字段：
-//   - enc:aes: 前缀 → 解密
-//   - 否则 → 按 \x1f 拆明文（仅 readOnly 模式允许）
-func decryptOrSplitAuth(value string, readOnly bool) (ak, sk string, err error) {
-	if crypto.IsEncrypted(value) {
-		return crypto.DecryptCredentials(value)
+// decryptAuth 处理 ctx.<name>.auth 字段：
+//   - 必须是 enc:aes: 密文
+//   - 不接受明文 AK\x1fSK
+func decryptAuth(value string) (ak, sk string, err error) {
+	if !crypto.IsEncrypted(value) {
+		return "", "", errors.New("auth 必须是 enc:aes: 密文；明文请改用 accesskey/secretkey 字段")
 	}
-	if !readOnly {
-		return "", "", fmt.Errorf("必须是 enc:aes: 密文")
-	}
-	parts := strings.SplitN(value, crypto.CredentialsSep, 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("明文 auth 格式无效，应为 <ak>\\x1f<sk>")
-	}
-	return parts[0], parts[1], nil
+	return crypto.DecryptCredentials(value)
 }
 
-// migrateLegacyConfig 将旧 s3m.conf 迁移到新格式，备份原文件到 path.bak
-func migrateLegacyConfig(path string, legacy map[string]string, useSSL *bool) (*ContextStore, error) {
-	ep := legacy[legacyKeyEndpoint]
-	akEnc := legacy[legacyKeyAccessKey]
-	skEnc := legacy[legacyKeySecretKey]
-
-	if ep == "" || akEnc == "" || skEnc == "" {
-		return nil, errors.New("旧配置格式不完整（缺 endpoint/accesskey/secretkey）")
-	}
-
-	var ak, sk string
-	if crypto.IsEncrypted(akEnc) && crypto.IsEncrypted(skEnc) {
-		var err error
-		ak, err = crypto.Decrypt(akEnc[crypto.EncryptedPrefixLen:])
-		if err != nil {
-			return nil, fmt.Errorf("迁移时解密 AccessKey 失败: %w", err)
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
 		}
-		sk, err = crypto.Decrypt(skEnc[crypto.EncryptedPrefixLen:])
-		if err != nil {
-			return nil, fmt.Errorf("迁移时解密 SecretKey 失败: %w", err)
-		}
-	} else {
-		ak = akEnc
-		sk = skEnc
 	}
-
-	ssl := true
-	if useSSL != nil {
-		ssl = *useSSL
-	}
-
-	store := &ContextStore{
-		Current: defaultContextName,
-		Contexts: map[string]Context{
-			defaultContextName: {
-				Endpoint:  ep,
-				UseSSL:    ssl,
-				AccessKey: ak,
-				SecretKey: sk,
-			},
-		},
-	}
-
-	// 备份原文件
-	if data, rerr := os.ReadFile(path); rerr == nil {
-		_ = os.WriteFile(path+migratedBackupSuffix, data, 0600)
-	}
-
-	if err := SaveContextStore(path, store); err != nil {
-		return nil, fmt.Errorf("写入新格式配置失败: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "检测到旧格式配置，已自动迁移为 context %q（原文件备份为 %s%s）\n",
-		defaultContextName, filepath.Base(path), migratedBackupSuffix)
-
-	return store, nil
+	return false
 }
 
 // SaveContextStore 把 store 写到文件（扁平 key=value 格式）
