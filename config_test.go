@@ -247,3 +247,102 @@ func TestImportFromFileLegacyRejected(t *testing.T) {
 		t.Errorf("错误信息不符合预期: %v", err)
 	}
 }
+
+func TestImportFromFileSyncsCurrentContext(t *testing.T) {
+	src := writeTempConf(t, `
+current-context=staging
+
+[dev]
+ctx.dev.endpoint=10.0.0.1:9000
+ctx.dev.usessl=false
+ctx.dev.accesskey=AKDEV
+ctx.dev.secretkey=SKDEV
+
+[staging]
+ctx.staging.endpoint=s3.staging.com
+ctx.staging.usessl=true
+ctx.staging.accesskey=AKSTAGING
+ctx.staging.secretkey=SKSTAGING
+`)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// 默认 conf 已有 current-context=dev，导入文件 current-context=staging 应覆盖
+	ops := &contextOps{}
+	if err := ops.Upsert("dev", "old.example.com", false, "OLD", "OLD"); err != nil {
+		t.Fatalf("准备默认 conf 失败: %v", err)
+	}
+	if _, err := ops.ImportFromFile(src); err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+
+	store, err := ParseContextStore(GetConfigPath(), false)
+	if err != nil {
+		t.Fatalf("回读默认配置失败: %v", err)
+	}
+	if store.Current != "staging" {
+		t.Errorf("导入后 current 应为 staging，实际为 %q", store.Current)
+	}
+}
+
+func TestImportFromFileFallsBackToFirstContext(t *testing.T) {
+	src := writeTempConf(t, `
+[zzz]
+ctx.zzz.endpoint=10.0.0.1:9000
+ctx.zzz.usessl=false
+ctx.zzz.accesskey=AKZZZ
+ctx.zzz.secretkey=SKZZZ
+
+[aaa]
+ctx.aaa.endpoint=s3.aaa.com
+ctx.aaa.usessl=true
+ctx.aaa.accesskey=AKAAA
+ctx.aaa.secretkey=SKAAA
+`)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	ops := &contextOps{}
+	imported, err := ops.ImportFromFile(src)
+	if err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+	if len(imported) != 2 || imported[0] != "zzz" || imported[1] != "aaa" {
+		t.Errorf("导入顺序应按文件出现顺序: %v", imported)
+	}
+
+	store, err := ParseContextStore(GetConfigPath(), false)
+	if err != nil {
+		t.Fatalf("回读默认配置失败: %v", err)
+	}
+	if store.Current != "zzz" {
+		t.Errorf("无 current-context 时应取文件中第一个 context，实际为 %q", store.Current)
+	}
+}
+
+func TestImportFromFileInvalidCurrentFallsBack(t *testing.T) {
+	src := writeTempConf(t, `
+current-context=ghost
+
+[dev]
+ctx.dev.endpoint=10.0.0.1:9000
+ctx.dev.usessl=false
+ctx.dev.accesskey=AKDEV
+ctx.dev.secretkey=SKDEV
+`)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	ops := &contextOps{}
+	if _, err := ops.ImportFromFile(src); err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+
+	store, err := ParseContextStore(GetConfigPath(), false)
+	if err != nil {
+		t.Fatalf("回读默认配置失败: %v", err)
+	}
+	if store.Current != "dev" {
+		t.Errorf("current 指向不存在时应回退到文件中第一个 context，实际为 %q", store.Current)
+	}
+}

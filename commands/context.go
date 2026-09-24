@@ -62,7 +62,7 @@ accesskey/secretkey 加密存储（机器绑定）。
   show [name]       解密显示 context 详情（默认显示当前）
   set <name>        交互式创建/更新 context
   rename <old> <new> 重命名 context
-  delete <name>     删除 context
+  delete <name>     删除 context（rm 为别名）
   import <file>     从明文 conf 文件导入 context 到默认配置`,
 
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -287,7 +287,7 @@ func newContextDeleteCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:     "delete <name>",
-		Aliases: []string{"del", "rm"},
+		Aliases: []string{"rm"},
 		Short:   "删除 context",
 		Args:    cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
@@ -321,7 +321,8 @@ func newContextImportCmd() *cobra.Command {
 合并策略:
   - 导入文件中的 context 与默认配置同名时，覆盖默认配置
   - 默认配置独有的 context 保留
-  - 导入文件的 current-context 不会同步到默认配置
+  - current-context 以导入文件为准：文件有 current-context 则同步为默认配置的
+    current-context；没有（或指向不存在的 context）则用文件中第一个 context
   - 导入文件本身不会被修改
 
 支持的文件格式（多 context 扁平 key=value）:
@@ -337,6 +338,9 @@ func newContextImportCmd() *cobra.Command {
 				exitErr(err)
 			}
 			fmt.Printf("已从 %s 导入 %d 个 context: %s\n", args[0], len(imported), strings.Join(imported, ", "))
+			if name, err := CtxOps.CurrentFn(); err == nil {
+				fmt.Printf("current-context: %s\n", name)
+			}
 		},
 	}
 }

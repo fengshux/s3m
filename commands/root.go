@@ -125,7 +125,7 @@ Context 管理:
 		NewCatCmd(),
 		NewSignCmd(),
 		NewCopyCmd(),
-		NewDelCmd(),
+		NewDeleteCmd(),
 	)
 
 	return rootCmd
@@ -498,14 +498,15 @@ func NewCopyCmd() *cobra.Command {
 	return cmd
 }
 
-// NewDelCmd 创建 del 子命令
-func NewDelCmd() *cobra.Command {
+// NewDeleteCmd 创建 delete 子命令
+func NewDeleteCmd() *cobra.Command {
 	var recursive bool
 	var force bool
 	var concurrent int
 	cmd := &cobra.Command{
-		Use:   "del bucket/object",
-		Short: "删除对象或目录",
+		Use:     "delete bucket/object",
+		Aliases: []string{"rm"},
+		Short:   "删除对象或目录",
 		Long: `删除指定存储桶中的对象或目录
 
 参数:
@@ -517,12 +518,12 @@ func NewDelCmd() *cobra.Command {
   --force            强制删除，不进行确认提示
 
 示例:
-  s3m del my-bucket/file.txt                  # 删除单个对象（需确认）
-  s3m del my-bucket/file.txt --force          # 删除单个对象（无需确认）
-  s3m del my-bucket/photos/ -r                # 递归删除目录（逐个，需确认）
-  s3m del my-bucket/photos/ -r -c 5           # 递归删除目录（5个并发，需确认）
-  s3m del my-bucket/photos/ -r --force        # 递归删除目录（逐个，无需确认）
-  s3m del my-bucket/photos/ -r -c 5 --force   # 递归删除目录（5个并发，无需确认）
+  s3m delete my-bucket/file.txt                  # 删除单个对象（需确认）
+  s3m delete my-bucket/file.txt --force          # 删除单个对象（无需确认）
+  s3m delete my-bucket/photos/ -r                # 递归删除目录（逐个，需确认）
+  s3m delete my-bucket/photos/ -r -c 5           # 递归删除目录（5个并发，需确认）
+  s3m delete my-bucket/photos/ -r --force        # 递归删除目录（逐个，无需确认）
+  s3m delete my-bucket/photos/ -r -c 5 --force   # 递归删除目录（5个并发，无需确认）
 
 确认提示:
   执行删除前会提示 "确定要删除 xxx 吗？(y/N)"
@@ -534,7 +535,7 @@ func NewDelCmd() *cobra.Command {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-			if err := requirePath(object, "del"); err != nil {
+			if err := requirePath(object, "delete"); err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}

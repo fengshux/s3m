@@ -166,9 +166,11 @@ func (o *contextOps) Delete(name string) error {
 }
 
 // ImportFromFile 从 filePath 读取 context 并合并到默认 conf。
-// 合并策略：默认 conf 中同名 context 被覆盖；独有的 context 保留；
-// current-context 不变（导入文件的 current-context 不会同步到默认 conf）。
-// 返回被新增或覆盖的 context 名称列表（按导入文件中出现顺序）。
+// 合并策略：
+//   - 默认 conf 中同名 context 被覆盖；独有的 context 保留
+//   - current-context 以导入文件为准：文件有 current-context 则同步为默认 conf 的
+//     current-context；没有（或指向不存在的 context）则用文件中第一个 context
+//   - 返回被新增或覆盖的 context 名称列表（按导入文件中出现顺序）
 func (o *contextOps) ImportFromFile(filePath string) ([]string, error) {
 	srcStore, err := ParseContextStore(filePath, true)
 	if err != nil {
@@ -188,9 +190,21 @@ func (o *contextOps) ImportFromFile(filePath string) ([]string, error) {
 
 	// 合并：srcStore 覆盖 defaultStore
 	touched := make([]string, 0, len(srcStore.Contexts))
-	for name, ctx := range srcStore.Contexts {
+	for _, name := range srcStore.Order {
+		ctx, ok := srcStore.Contexts[name]
+		if !ok {
+			continue
+		}
 		defaultStore.Contexts[name] = ctx
 		touched = append(touched, name)
+	}
+
+	// current-context 以导入文件为准：
+	// 文件有 current-context 且存在 → 同步；否则回退到文件中第一个 context
+	if _, ok := srcStore.Contexts[srcStore.Current]; ok {
+		defaultStore.Current = srcStore.Current
+	} else {
+		defaultStore.Current = srcStore.Order[0]
 	}
 
 	// 写入默认 conf

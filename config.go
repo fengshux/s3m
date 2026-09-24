@@ -32,7 +32,8 @@ type Context struct {
 type ContextStore struct {
 	Current  string
 	Contexts map[string]Context
-	ReadOnly bool // --config 显式指定时为 true：写操作禁止
+	ReadOnly bool     // --config 显式指定时为 true：写操作禁止
+	Order    []string // context 在文件中的出现顺序（解析时记录，不落盘）
 }
 
 // 配置文件中 context 字段的前缀，例如 "ctx.prod.endpoint"
@@ -210,6 +211,10 @@ func parseContextStore(path string, readOnly bool) (*ContextStore, error) {
 		}
 		name := rest[:dot]
 		field := strings.ToLower(rest[dot+1:])
+
+		if _, seen := store.Contexts[name]; !seen {
+			store.Order = append(store.Order, name)
+		}
 
 		ctx := store.Contexts[name]
 		switch field {

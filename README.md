@@ -23,7 +23,7 @@ S3M 使用 context 管理多个 S3 服务端。每个 context 保存一个服务
 ### 快速开始
 
 ```bash
-# 创建第一个 context（交互式）
+# 创建第一个 context（命令式）
 s3m context set prod
 # 按提示输入 Endpoint / AccessKey / SecretKey / UseSSL
 
@@ -57,7 +57,7 @@ s3m --context prod
 | `s3m context show [name]` | 解密显示 context 详情 |
 | `s3m context set <name>` | 交互式创建/更新 context |
 | `s3m context rename <old> <new>` | 重命名 context |
-| `s3m context delete <name> [-f]` | 删除 context（删除当前时自动清空 current-context） |
+| `s3m context delete <name> [-f]` | 删除 context（`rm` 为别名，删除当前时自动清空 current-context） |
 | `s3m context import <file>` | 从明文 conf 文件导入 context 到默认配置 |
 
 ### 配置文件
@@ -79,8 +79,6 @@ ctx.dev.usessl=false
 ctx.dev.auth=enc:aes:<密文>
 ```
 
-`ctx.<name>.auth` 仅支持密文：明文为 `<accessKey>\x1f<secretKey>`（`\x1f` 是 ASCII Unit Separator），整体 AES-256-GCM 加密后用 base64 编码，前缀 `enc:aes:`。该字段由程序写入/导入自动生成；手写明文请改用 `ctx.<name>.accesskey` / `ctx.<name>.secretkey`。
-
 ### 配置文件查找优先级
 
 1. `--config` 参数指定的路径
@@ -93,7 +91,6 @@ ctx.dev.auth=enc:aes:<密文>
 通过 `--config=path/to/s3m.conf` 指定外部配置文件时：
 
 - **允许明文 AK/SK**：不必提前加密，方便临时访问某个 endpoint
-- **不触发迁移**：原文件保持不动
 - **写操作禁止**：`context set/upsert/rename/delete/set-default` 全部报错并提示
 - **TUI 仍可读**：标题栏显示 `[ctx: name (readonly)]`，`use <name>` 临时切换可用，`set-default` 被拒
 
@@ -105,22 +102,19 @@ current-context=dev
 [dev]
 ctx.dev.endpoint=10.0.0.1:9000
 ctx.dev.usessl=false
-# 明文 AK/SK：最方便，优先于 auth
 ctx.dev.accesskey=AKDEV
 ctx.dev.secretkey=SKDEV
 
 [staging]
 ctx.staging.endpoint=s3.example.com
 ctx.staging.usessl=true
-# auth 仅支持 enc:aes: 密文（由程序写入/导入生成）
 ctx.staging.auth=enc:aes:<密文>
 ```
 
 规则：
-- `ctx.<name>.accesskey` / `ctx.<name>.secretkey` 为明文字段，必须成对出现
-- `ctx.<name>.auth` 仅支持 `enc:aes:...` 密文，不接受明文 `<ak>\x1f<sk>`
+- `ctx.<name>.accesskey` / `ctx.<name>.secretkey` 必须成对出现
+- `ctx.<name>.auth` 仅支持 `enc:aes:...` 密文
 - 同一 context 同时出现 `auth` 与 `accesskey/secretkey` 时，优先 `accesskey/secretkey`
-- 旧格式（无 `ctx.` 前缀的 `endpoint/accesskey/secretkey/usessl`）已废弃，直接报错
 
 使用示例：
 
@@ -147,8 +141,7 @@ s3m context import /tmp/my-plain.conf
 合并规则：
 - 导入文件中的 context 与默认配置同名 → 覆盖默认配置
 - 默认配置独有的 context → 保留
-- 导入文件的 `current-context` 不会同步到默认配置（避免误改当前默认）
-- 导入文件本身**不会**被修改
+- `current-context` 以导入文件为准：文件有 `current-context` 则同步为默认配置的；没有（或指向不存在的 context）则用文件中第一个 context
 - 导入文件不存在时返回错误并退出码 1
 
 导入时如果源文件使用明文 `ctx.<name>.accesskey` / `ctx.<name>.secretkey`，会自动加密为 `ctx.<name>.auth=enc:aes:...` 写入默认配置，**不保留明文**。
@@ -372,14 +365,15 @@ S3 的服务端复制（`x-amz-copy-source`）只能在同一 endpoint 内进行
 #### 删除对象
 
 ```bash
-s3m del bucket/object               # 删除单个对象（需确认）
-s3m del bucket/object --force       # 删除单个对象（无需确认）
+# delete 的别名是 rm
+s3m delete bucket/object               # 删除单个对象（需确认）
+s3m delete bucket/object --force       # 删除单个对象（无需确认）
 
 # 递归删除目录
-s3m del bucket/photos/ -r                # 逐个删除（需确认）
-s3m del bucket/photos/ -r -c 5           # 5个并发删除（需确认）
-s3m del bucket/photos/ -r --force        # 逐个删除（无需确认）
-s3m del bucket/photos/ -r -c 5 --force   # 5个并发删除（无需确认）
+s3m delete bucket/photos/ -r                # 逐个删除（需确认）
+s3m delete bucket/photos/ -r -c 5           # 5个并发删除（需确认）
+s3m delete bucket/photos/ -r --force        # 逐个删除（无需确认）
+s3m delete bucket/photos/ -r -c 5 --force   # 5个并发删除（无需确认）
 ```
 
 **删除确认提示：**
@@ -398,7 +392,7 @@ s3m context current <name>               # 设置默认 context
 s3m context set <name>                   # 交互式创建/更新 context
 s3m context show [name]                  # 解密显示 context 详情
 s3m context rename <old> <new>           # 重命名 context
-s3m context delete <name> [-f]           # 删除 context
+s3m context delete <name> [-f]           # 删除 context（rm 为别名）
 ```
 
 运行时使用 `--context` 临时指定，TUI 中通过 `use`/`set-default` 切换。详见上节 "Context 管理"。
