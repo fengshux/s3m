@@ -13,7 +13,12 @@ S3M（S3 Mini Client）是 S3 对象存储协议的命令行客户端，支持�
 ## 安装
 
 ```bash
-go build -o s3m
+# 构建 linux/amd64 和 linux/arm64 两个架构
+make
+
+# 单独构建某个架构
+make amd64
+make arm64
 ```
 
 ## Context 管理
